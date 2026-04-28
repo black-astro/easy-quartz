@@ -6,10 +6,16 @@ import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.Method;
 import java.util.Date;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.gibis.easyquartz.config.EasyQuartzContextAutoConfiguration.SCHEDULER_CTX_APP;
 
 public class EasyQuartzMethodJob implements Job {
+
+    /**
+     * Reflection lookup 비용을 매 실행마다 반복하지 않도록 (beanName + "#" + methodName) 키 기반으로 Method를 캐시합니다.
+     */
+    private static final ConcurrentHashMap<String, Method> METHOD_CACHE = new ConcurrentHashMap<>();
 
     @Override
     public void execute(JobExecutionContext context) throws JobExecutionException {
@@ -34,7 +40,17 @@ public class EasyQuartzMethodJob implements Job {
         String methodName = map.getString("methodName");
 
         Object bean = app.getBean(beanName);
-        Method m = bean.getClass().getMethod(methodName);
+        Class<?> beanClass = bean.getClass();
+
+        Method m = METHOD_CACHE.computeIfAbsent(beanClass.getName() + "#" + methodName, key -> {
+            try {
+                return beanClass.getMethod(methodName);
+            } catch (NoSuchMethodException e) {
+                throw new IllegalStateException(
+                        "Method not found: " + beanClass.getName() + "." + methodName, e);
+            }
+        });
+
         m.invoke(bean);
     }
 
@@ -49,18 +65,14 @@ public class EasyQuartzMethodJob implements Job {
         String triggerGroup = map.getString("triggerGroup");
         TriggerKey tk = TriggerKey.triggerKey(triggerName, triggerGroup);
 
-        // 다음 실행: "완료 시점" + interval
         Date next = new Date(System.currentTimeMillis() + intervalMs);
 
-        JobDataMap map2 = ctx.getMergedJobDataMap();
-        long endAtEpochMs = map2.getLongValue("endAtEpochMs"); // JobDataMap에 추가 필요
+        long endAtEpochMs = map.getLongValue("endAtEpochMs");
 
         if (endAtEpochMs > 0 && next.getTime() > endAtEpochMs) {
-            // 종료 시간 초과 시 재스케줄하지 않음
             return;
         }
 
-        // 1회 트리거로 재생성
         Trigger newTrigger = TriggerBuilder.newTrigger()
                 .withIdentity(tk)
                 .forJob(ctx.getJobDetail().getKey())

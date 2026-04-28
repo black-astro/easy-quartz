@@ -4,6 +4,7 @@ package com.gibis.easyquartz.service;
 import com.gibis.easyquartz.config.EasyQuartzProperties;
 import com.gibis.easyquartz.enums.CalendarUnit;
 import com.gibis.easyquartz.enums.MisfirePolicy;
+import com.gibis.easyquartz.enums.SchedulerEngine;
 import com.gibis.easyquartz.interfaces.*;
 import org.quartz.*;
 import org.springframework.aop.support.AopUtils;
@@ -14,22 +15,33 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
- * - 통합 어노테이션 @EasyQuartzScheduled 지원
- * - 기존 개별 어노테이션도 하위 호환성 유지
+ * @EasyQuartzScheduled 통합 처리기.
+ * <p>
+ * - {@code engine}에 따라 Quartz 또는 Spring 등록 경로로 분기합니다.
+ * - 레거시 단일 어노테이션(@EasyQuartzCron 등)도 함께 처리합니다.
+ * </p>
  */
 public class EasyQuartzRegistrar implements SmartInitializingSingleton {
 
     private final ApplicationContext appCtx;
     private final EasyQuartzProperties props;
     private final EasyQuartzBackwardRegistrar backward;
+    private final EasySpringRegistrar springRegistrar;
 
-    public EasyQuartzRegistrar(ApplicationContext appCtx, EasyQuartzProperties props, EasyQuartzBackwardRegistrar backward) {
+    public EasyQuartzRegistrar(
+            ApplicationContext appCtx,
+            EasyQuartzProperties props,
+            EasyQuartzBackwardRegistrar backward,
+            EasySpringRegistrar springRegistrar
+    ) {
         this.appCtx = appCtx;
         this.props = props;
         this.backward = backward;
+        this.springRegistrar = springRegistrar;
     }
 
     @Override
@@ -45,10 +57,9 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
             for (Method m : targetClass.getMethods()) {
                 if (!backward.isSupportedSignature(m)) continue;
 
-                // 통합 어노테이션 우선 처리
                 if (m.isAnnotationPresent(EasyQuartzScheduled.class)) {
                     registerScheduled(beanName, m, m.getAnnotation(EasyQuartzScheduled.class));
-                    continue; // 통합 어노테이션이 있으면 개별 어노테이션은 무시
+                    continue;
                 }
 
                 if (m.isAnnotationPresent(EasyQuartzCron.class)) {
@@ -67,12 +78,12 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         }
     }
 
-    // ========================================
-    // 새로운 통합 어노테이션 처리
-    // ========================================
-
     private void registerScheduled(String beanName, Method m, EasyQuartzScheduled a) {
         try {
+            if (a.engine() == SchedulerEngine.SPRING) {
+                springRegistrar.register(beanName, m, a);
+                return;
+            }
             switch (a.type()) {
                 case CRON -> registerScheduledCron(beanName, m, a);
                 case FIXED_RATE -> registerScheduledFixedRate(beanName, m, a);
@@ -98,15 +109,15 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         JobKey jk = JobKey.jobKey(base + ".job", a.group());
         TriggerKey tk = TriggerKey.triggerKey(base + ".trigger", a.group());
 
-        JobDetail job = createJobDetail(jk, a.description(), a.disallowConcurrent(), beanName, m, null);
+        JobDetail job = createJobDetail(jk, a, beanName, m, null);
 
         TimeZone tz = TimeZone.getTimeZone(backward.resolveTz(a.timeZone()));
         CronScheduleBuilder sb = CronScheduleBuilder.cronSchedule(a.cron()).inTimeZone(tz);
         sb = applyMisfire(sb, a.misfire());
 
         Trigger trigger = backward.applyStartEnd(
-                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withSchedule(sb),
-                toMillis(a.startDelaySeconds()),
+                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withPriority(a.priority()).withSchedule(sb),
+                computeStartDelayMs(a),
                 calculateEndTime(a.endAfterSeconds())
         ).build();
 
@@ -127,7 +138,7 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         JobKey jk = JobKey.jobKey(base + ".job", a.group());
         TriggerKey tk = TriggerKey.triggerKey(base + ".trigger", a.group());
 
-        JobDetail job = createJobDetail(jk, a.description(), a.disallowConcurrent(), beanName, m, null);
+        JobDetail job = createJobDetail(jk, a, beanName, m, null);
 
         SimpleScheduleBuilder sb = SimpleScheduleBuilder.simpleSchedule()
                 .withIntervalInMilliseconds(intervalMs);
@@ -144,8 +155,8 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         sb = applySimpleMisfire(sb, a.misfire());
 
         Trigger trigger = backward.applyStartEnd(
-                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withSchedule(sb),
-                toMillis(a.startDelaySeconds()),
+                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withPriority(a.priority()).withSchedule(sb),
+                computeStartDelayMs(a),
                 calculateEndTime(a.endAfterSeconds())
         ).build();
 
@@ -170,23 +181,23 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         JobKey jk = JobKey.jobKey(base + ".job", a.group());
         TriggerKey tk = TriggerKey.triggerKey(base + ".trigger", a.group());
 
-        // ✅ FIXED_DELAY는 Job에서 다음 실행을 스케줄링하므로 JobDataMap에 정보 저장
         JobDataMap map = backward.baseJobData(beanName, m);
+        applyJobData(map, a.jobData());
         map.put("intervalMs", intervalMs);
         map.put("triggerName", tk.getName());
         map.put("triggerGroup", tk.getGroup());
         map.put("fixedMode", "FIXED_DELAY");
         map.put("endAtEpochMs", calculateEndTime(a.endAfterSeconds()));
 
-        JobDetail job = createJobDetail(jk, a.description(), true, beanName, m, map);
+        JobDetail job = createJobDetail(jk, a, beanName, m, map);
 
-        // 첫 실행은 SimpleTrigger로 한 번만
         Trigger trigger = backward.applyStartEnd(
                 TriggerBuilder.newTrigger()
                         .withIdentity(tk)
                         .forJob(jk)
+                        .withPriority(a.priority())
                         .withSchedule(SimpleScheduleBuilder.simpleSchedule().withRepeatCount(0)),
-                toMillis(a.startDelaySeconds()),
+                computeStartDelayMs(a),
                 calculateEndTime(a.endAfterSeconds())
         ).build();
 
@@ -206,7 +217,7 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         JobKey jk = JobKey.jobKey(base + ".job", a.group());
         TriggerKey tk = TriggerKey.triggerKey(base + ".trigger", a.group());
 
-        JobDetail job = createJobDetail(jk, a.description(), a.disallowConcurrent(), beanName, m, null);
+        JobDetail job = createJobDetail(jk, a, beanName, m, null);
 
         TimeZone tz = TimeZone.getTimeZone(backward.resolveTz(a.timeZone()));
         CalendarIntervalScheduleBuilder sb = CalendarIntervalScheduleBuilder.calendarIntervalSchedule()
@@ -224,8 +235,8 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         sb = applyCalendarMisfire(sb, a.misfire());
 
         Trigger trigger = backward.applyStartEnd(
-                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withSchedule(sb),
-                toMillis(a.startDelaySeconds()),
+                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withPriority(a.priority()).withSchedule(sb),
+                computeStartDelayMs(a),
                 calculateEndTime(a.endAfterSeconds())
         ).build();
 
@@ -250,20 +261,18 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         JobKey jk = JobKey.jobKey(base + ".job", a.group());
         TriggerKey tk = TriggerKey.triggerKey(base + ".trigger", a.group());
 
-        JobDetail job = createJobDetail(jk, a.description(), a.disallowConcurrent(), beanName, m, null);
+        JobDetail job = createJobDetail(jk, a, beanName, m, null);
 
         DailyTimeIntervalScheduleBuilder sb = DailyTimeIntervalScheduleBuilder.dailyTimeIntervalSchedule()
                 .startingDailyAt(TimeOfDay.hourAndMinuteOfDay(a.dailyStartHour(), a.dailyStartMin()))
                 .endingDailyAt(TimeOfDay.hourAndMinuteOfDay(a.dailyEndHour(), a.dailyEndMin()));
 
-        // 간격 설정 (초 단위 우선)
         if (intervalSeconds >= 60) {
             sb = sb.withIntervalInMinutes((int) (intervalSeconds / 60));
         } else {
             sb = sb.withIntervalInSeconds((int) intervalSeconds);
         }
 
-        // 요일 설정
         if (a.daysOfWeek() != null && a.daysOfWeek().length > 0) {
             Set<Integer> dows = Arrays.stream(a.daysOfWeek())
                     .mapToInt(backward::toQuartzDow)
@@ -275,66 +284,74 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         sb = applyDailyMisfire(sb, a.misfire());
 
         Trigger trigger = backward.applyStartEnd(
-                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withSchedule(sb),
-                toMillis(a.startDelaySeconds()),
+                TriggerBuilder.newTrigger().withIdentity(tk).forJob(jk).withPriority(a.priority()).withSchedule(sb),
+                computeStartDelayMs(a),
                 calculateEndTime(a.endAfterSeconds())
         ).build();
 
         backward.upsert(job, trigger, tk);
     }
+
     // ========================================
-    // 유틸리티 메서드
+    // 유틸리티
     // ========================================
 
-    /**
-     * 시/분/초를 밀리초로 변환
-     */
     private long calculateInterval(long hours, long minutes, long seconds) {
         return (hours * 3600 + minutes * 60 + seconds) * 1000;
     }
 
-    /**
-     * 초를 밀리초로 변환
-     */
-    private long toMillis(long seconds) {
-        return seconds * 1000;
-    }
-
-    /**
-     * 종료 시간 계산 (시작 시점 기준)
-     */
     private long calculateEndTime(long endAfterSeconds) {
         if (endAfterSeconds <= 0) return -1;
         return System.currentTimeMillis() + endAfterSeconds * 1000;
     }
 
     /**
-     * JobDetail 생성
+     * 시작 지연을 계산합니다. jitterSeconds가 양수이면 0~jitter 사이의 임의 값을 추가합니다.
      */
+    private long computeStartDelayMs(EasyQuartzScheduled a) {
+        long base = a.startDelaySeconds() * 1000L;
+        long jitter = a.jitterSeconds();
+        if (jitter > 0) {
+            base += ThreadLocalRandom.current().nextLong(jitter * 1000L + 1);
+        }
+        return base;
+    }
+
     private JobDetail createJobDetail(
             JobKey jk,
-            String description,
-            boolean disallowConcurrent,
+            EasyQuartzScheduled a,
             String beanName,
             Method m,
             JobDataMap additionalData
     ) {
         JobDataMap map = additionalData != null ? additionalData : backward.baseJobData(beanName, m);
         if (additionalData == null) {
-            map = backward.baseJobData(beanName, m);
+            applyJobData(map, a.jobData());
         }
 
-        return JobBuilder.newJob(backward.jobClass(disallowConcurrent))
+        return JobBuilder.newJob(backward.jobClass(a.disallowConcurrent()))
                 .withIdentity(jk)
-                .withDescription(description)
+                .withDescription(a.description())
                 .usingJobData(map)
                 .storeDurably(true)
+                .requestRecovery(a.requestRecovery())
                 .build();
     }
 
     /**
-     * Misfire 정책 적용 (CronScheduleBuilder)
+     * "key=value" 문자열 배열을 JobDataMap에 적용합니다.
      */
+    private void applyJobData(JobDataMap map, String[] entries) {
+        if (entries == null) return;
+        for (String entry : entries) {
+            int idx = entry.indexOf('=');
+            if (idx <= 0) {
+                throw new IllegalArgumentException("jobData entry must be 'key=value' but was: " + entry);
+            }
+            map.put(entry.substring(0, idx), entry.substring(idx + 1));
+        }
+    }
+
     private CronScheduleBuilder applyMisfire(CronScheduleBuilder sb, MisfirePolicy policy) {
         return switch (policy) {
             case DO_NOTHING -> sb.withMisfireHandlingInstructionDoNothing();
@@ -343,9 +360,6 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         };
     }
 
-    /**
-     * Misfire 정책 적용 (SimpleScheduleBuilder)
-     */
     private SimpleScheduleBuilder applySimpleMisfire(SimpleScheduleBuilder sb, MisfirePolicy policy) {
         return switch (policy) {
             case DO_NOTHING -> sb.withMisfireHandlingInstructionNextWithRemainingCount();
@@ -354,9 +368,6 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         };
     }
 
-    /**
-     * Misfire 정책 적용 (CalendarIntervalScheduleBuilder)
-     */
     private CalendarIntervalScheduleBuilder applyCalendarMisfire(CalendarIntervalScheduleBuilder sb, MisfirePolicy policy) {
         return switch (policy) {
             case DO_NOTHING -> sb.withMisfireHandlingInstructionDoNothing();
@@ -365,9 +376,6 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
         };
     }
 
-    /**
-     * Misfire 정책 적용 (DailyTimeIntervalScheduleBuilder)
-     */
     private DailyTimeIntervalScheduleBuilder applyDailyMisfire(DailyTimeIntervalScheduleBuilder sb, MisfirePolicy policy) {
         return switch (policy) {
             case DO_NOTHING -> sb.withMisfireHandlingInstructionDoNothing();

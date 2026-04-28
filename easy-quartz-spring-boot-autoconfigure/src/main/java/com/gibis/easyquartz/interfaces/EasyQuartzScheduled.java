@@ -5,6 +5,7 @@ import com.gibis.easyquartz.enums.CalendarUnit;
 import com.gibis.easyquartz.enums.Day;
 import com.gibis.easyquartz.enums.MisfirePolicy;
 import com.gibis.easyquartz.enums.ScheduleType;
+import com.gibis.easyquartz.enums.SchedulerEngine;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -210,6 +211,59 @@ public @interface EasyQuartzScheduled {
      * - DO_NOTHING: 다음 예정 시간까지 대기
      * - FIRE_AND_PROCEED: 즉시 실행 후 정상 진행
      * - IGNORE_MISFIRES: Misfire 무시하고 모두 실행
+     *
+     * <p>QUARTZ 엔진에서만 의미가 있습니다. SPRING 엔진은 misfire 개념을 지원하지 않으며 이 값을 무시합니다.</p>
      */
     MisfirePolicy misfire() default MisfirePolicy.DO_NOTHING;
+
+    // ========================================
+    // 실행 엔진 선택
+    // ========================================
+
+    /**
+     * 스케줄링 실행 엔진.
+     * <p>
+     * - {@link SchedulerEngine#QUARTZ} (기본값): Quartz Scheduler 사용. 모든 ScheduleType 지원.
+     * - {@link SchedulerEngine#SPRING}: Spring TaskScheduler 사용. 가볍지만 CRON/FIXED_RATE/FIXED_DELAY만 지원.
+     * </p>
+     */
+    SchedulerEngine engine() default SchedulerEngine.QUARTZ;
+
+    // ========================================
+    // QUARTZ 엔진 전용 고급 옵션
+    // ========================================
+
+    /**
+     * 트리거 우선순위. 동일한 시각에 여러 트리거가 발화될 때 큰 값이 우선합니다.
+     * Quartz 기본값은 5이며, 음수도 허용됩니다.
+     *
+     * <p>QUARTZ 엔진 전용입니다.</p>
+     */
+    int priority() default 5;
+
+    /**
+     * 잡 실행 도중 스케줄러 인스턴스가 비정상 종료되었을 때, 다음 기동 시 해당 실행을 복구할지 여부.
+     * 일반적으로 멱등성을 보장하지 못하는 잡에서는 false 권장.
+     *
+     * <p>QUARTZ 엔진 전용이며, JDBC JobStore + 클러스터링 환경에서 의미가 있습니다.</p>
+     */
+    boolean requestRecovery() default false;
+
+    /**
+     * 첫 실행 시각에 0~jitterSeconds 사이의 임의 지연을 추가합니다. (단위: 초)
+     * 동일한 cron으로 등록된 다수의 잡이 정확히 같은 시각에 동시에 발화되어 하류 시스템에 부담을 주는 현상을 분산하는 데 유용합니다.
+     */
+    long jitterSeconds() default 0;
+
+    /**
+     * 잡에 전달할 추가 데이터. {@code "key=value"} 형식의 문자열 배열로 지정합니다.
+     *
+     * <p>예: {@code jobData = {"target=USER", "limit=100"}}</p>
+     *
+     * <p>
+     * QUARTZ 엔진에서는 {@code JobDataMap}으로 전달되어 {@code JobExecutionContext}를 통해 조회 가능합니다.
+     * SPRING 엔진에서는 등록 메타정보로만 사용되고 실행 메서드에 전달되지 않습니다.
+     * </p>
+     */
+    String[] jobData() default {};
 }

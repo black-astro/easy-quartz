@@ -4,9 +4,10 @@ plugins {
 }
 
 allprojects {
-    // TODO: gradle.properties의 githubUser 값을 본인 GitHub 아이디로 바꾸세요.
-    //       (Maven Central 발행 시 io.github.<id> 네임스페이스는 GitHub 계정만으로 자동 검증됨)
+    // gradle.properties의 githubUser / githubRepo 값을 사용합니다.
+    // group은 GitHub 아이디만으로 결정되며(io.github.<id>), repo 이름은 POM 메타데이터에만 들어갑니다.
     def ghUser = (findProperty('githubUser') ?: 'TODO_GITHUB_ID').toString()
+    def ghRepo = (findProperty('githubRepo') ?: 'easy-quartz').toString()
 
     group = "io.github.${ghUser}"
     version = '0.0.1'
@@ -14,9 +15,10 @@ allprojects {
     repositories { mavenCentral() }
 
     ext.githubUser = ghUser
-    ext.libUrl = "https://github.com/${ghUser}/easy-quartz"
-    ext.scmConnection = "scm:git:git://github.com/${ghUser}/easy-quartz.git"
-    ext.scmDeveloperConnection = "scm:git:ssh://github.com/${ghUser}/easy-quartz.git"
+    ext.githubRepo = ghRepo
+    ext.libUrl = "https://github.com/${ghUser}/${ghRepo}"
+    ext.scmConnection = "scm:git:git://github.com/${ghUser}/${ghRepo}.git"
+    ext.scmDeveloperConnection = "scm:git:ssh://github.com/${ghUser}/${ghRepo}.git"
 }
 
 ext {
