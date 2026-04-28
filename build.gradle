@@ -93,11 +93,18 @@ subprojects {
     }
 
     // 키가 있을 때만 sign 태스크를 등록. 로컬/JitPack에서는 키 없이 통과.
+    // SIGNING_KEY 는 ASCII-armored 원문 또는 base64 인코딩 둘 다 허용.
     signing {
-        def signingKey = findProperty('signingKey') ?: System.getenv('SIGNING_KEY')
+        def rawKey = (findProperty('signingKey') ?: System.getenv('SIGNING_KEY'))?.toString()?.trim()
         def signingPassword = findProperty('signingPassword') ?: System.getenv('SIGNING_PASSWORD')
+        def signingKey = null
+        if (rawKey) {
+            signingKey = rawKey.startsWith('-----BEGIN')
+                ? rawKey
+                : new String(rawKey.decodeBase64(), 'UTF-8')
+        }
         if (signingKey) {
-            useInMemoryPgpKeys(signingKey.toString(), signingPassword?.toString() ?: '')
+            useInMemoryPgpKeys(signingKey, signingPassword?.toString() ?: '')
             sign publishing.publications.mavenJava
         }
     }
