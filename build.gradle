@@ -96,7 +96,8 @@ subprojects {
     signing {
         def signingKey = findProperty('signingKey') ?: System.getenv('SIGNING_KEY')
         def signingPassword = findProperty('signingPassword') ?: System.getenv('SIGNING_PASSWORD')
-        required = { gradle.taskGraph.hasTask('publishToSonatype') && signingKey }
+        // Boolean을 명확히 반환해야 Gradle 9의 signing 플러그인이 spec 평가를 통과함
+        required = { gradle.taskGraph.hasTask(':publishToSonatype') && signingKey != null }
         if (signingKey) {
             useInMemoryPgpKeys(signingKey, signingPassword)
             sign publishing.publications.mavenJava
