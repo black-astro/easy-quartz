@@ -92,14 +92,12 @@ subprojects {
         }
     }
 
-    // Maven Central은 서명 필수. JitPack/로컬 빌드에서는 키 없이 통과시킴.
+    // 키가 있을 때만 sign 태스크를 등록. 로컬/JitPack에서는 키 없이 통과.
     signing {
         def signingKey = findProperty('signingKey') ?: System.getenv('SIGNING_KEY')
         def signingPassword = findProperty('signingPassword') ?: System.getenv('SIGNING_PASSWORD')
-        // Boolean을 명확히 반환해야 Gradle 9의 signing 플러그인이 spec 평가를 통과함
-        required = { gradle.taskGraph.hasTask(':publishToSonatype') && signingKey != null }
         if (signingKey) {
-            useInMemoryPgpKeys(signingKey, signingPassword)
+            useInMemoryPgpKeys(signingKey.toString(), signingPassword?.toString() ?: '')
             sign publishing.publications.mavenJava
         }
     }
