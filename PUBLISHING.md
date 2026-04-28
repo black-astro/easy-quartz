@@ -124,9 +124,38 @@ githubRepo=easy-quartz
 
 ## 버전 관리
 
-`build.gradle` 루트의 `version = '0.0.1'`을 올린 뒤 다시 발행합니다. **이미 발행된 버전은 변경하거나 삭제할 수 없습니다.** 이는 Maven Central의 정책입니다.
+`build.gradle` 루트의 `version` 값을 올린 뒤 다시 발행합니다. **이미 발행된 버전은 변경하거나 삭제할 수 없습니다.** 이는 Maven Central의 정책입니다.
 
-스냅샷 발행이 필요하다면 `version = '0.0.2-SNAPSHOT'`처럼 접미사를 부여합니다. 스냅샷은 `https://central.sonatype.com/repository/maven-snapshots/` 에 업로드되며, 정식 릴리스가 아닌 만큼 횟수 제한 없이 덮어쓸 수 있습니다.
+스냅샷 발행이 필요하다면 `version = '0.0.x-SNAPSHOT'`처럼 접미사를 부여합니다. 스냅샷은 `https://central.sonatype.com/repository/maven-snapshots/` 에 업로드되며, 정식 릴리스가 아닌 만큼 횟수 제한 없이 덮어쓸 수 있습니다.
+
+### GitHub Actions 자동 발행 (권장)
+
+본 레포에는 `.github/workflows/publish.yml`이 포함되어 있어, **`v`로 시작하는 태그를 push하면 자동으로 발행**됩니다. 이 경로를 사용하면 사용자의 로컬 PC에는 GPG 키나 Sonatype 토큰이 필요하지 않습니다.
+
+사전 작업(한 번만): GitHub repo의 **Settings → Secrets and variables → Actions**에 다음 4개를 등록합니다.
+
+| 이름 | 값 |
+| --- | --- |
+| `OSSRH_USERNAME` | Sonatype User Token의 username |
+| `OSSRH_PASSWORD` | Sonatype User Token의 password |
+| `SIGNING_KEY` | `private.key`를 `\n`으로 escape한 한 줄 |
+| `SIGNING_PASSWORD` | GPG passphrase |
+
+이후 새 버전을 올릴 때마다:
+
+```bash
+# 1. version 변경
+#    build.gradle 루트의 version = '0.0.x' 갱신
+
+git add -A
+git commit -m "release: vX.Y.Z"
+git push
+
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+마지막 명령으로 GitHub Actions가 트리거되어 빌드·서명·publish·release까지 자동 처리합니다. 진행 상황은 `https://github.com/black-astro/easy-quartz/actions`에서 확인할 수 있습니다.
 
 ---
 

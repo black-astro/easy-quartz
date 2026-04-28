@@ -26,6 +26,7 @@ public void everyMorning() {
 - [구성 (`application.yml`)](#구성-applicationyml)
 - [동작 원리](#동작-원리)
 - [성능과 운영](#성능과-운영)
+- [트러블슈팅](#트러블슈팅)
 - [라이브러리 빌드 및 발행](#라이브러리-빌드-및-발행)
 - [라이선스](#라이선스)
 
@@ -46,7 +47,7 @@ starter 의존성을 추가하면 Quartz, AOP, Validation은 자동으로 따라
 
 ```groovy
 dependencies {
-    implementation 'io.github.black-astro:easy-quartz-spring-boot-starter:0.0.1'
+    implementation 'io.github.black-astro:easy-quartz-spring-boot-starter:0.0.2'
 }
 ```
 
@@ -54,7 +55,7 @@ dependencies {
 
 ```kotlin
 dependencies {
-    implementation("io.github.black-astro:easy-quartz-spring-boot-starter:0.0.1")
+    implementation("io.github.black-astro:easy-quartz-spring-boot-starter:0.0.2")
 }
 ```
 
@@ -64,7 +65,7 @@ dependencies {
 <dependency>
     <groupId>io.github.black-astro</groupId>
     <artifactId>easy-quartz-spring-boot-starter</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
 </dependency>
 ```
 
@@ -510,6 +511,43 @@ easy:
 - **JDBC JobStore + 클러스터링**: 잡 영속화와 다중 노드 안전 실행이 필요하면 `spring.quartz.job-store-type=jdbc`와 `org.quartz.jobStore.isClustered=true`로 설정하세요. 이 모드에서는 `requestRecovery`, `update-existing` 옵션이 의미를 가집니다.
 - **그레이스풀 셧다운**: 본 라이브러리가 자체 등록한 `easyQuartzSpringTaskScheduler`는 컨테이너 종료 시 30초까지 진행 중 작업을 기다립니다. 더 긴 시간이 필요하면 빈을 재정의하세요.
 - **모니터링**: Quartz는 `JobListener`/`TriggerListener`를 통해 실행 통계를 수집할 수 있습니다. 직접 빈으로 등록하면 `Scheduler`가 자동으로 인식합니다.
+
+---
+
+## 트러블슈팅
+
+### 어노테이션을 붙였는데 잡이 등록되지 않습니다
+
+가장 흔한 원인은 다음과 같습니다.
+
+- `@EnableEasyQuartz`를 어디에도 부착하지 않음. 메인 클래스 또는 임의의 `@Configuration`에 한 번 추가해야 합니다.
+- 메서드 시그니처가 조건을 만족하지 않음. `public`, **인자 0개**, 반환 타입 `void`여야 합니다. 그렇지 않은 메서드는 조용히 건너뜁니다.
+- 메서드가 속한 클래스가 `easy.quartz.scan-packages` 범위에 들어 있지 않음. 빈 리스트(기본)면 전체를 스캔하므로 보통은 문제가 되지 않습니다.
+
+### `IllegalStateException: ScheduleType CALENDAR is supported only on the QUARTZ engine`
+
+`engine = SchedulerEngine.SPRING`으로 지정한 메서드에 `CALENDAR` 또는 `DAILY_TIME`을 사용한 경우입니다. 두 타입은 Quartz의 캘린더 기반 트리거 기능에 의존하므로 Spring 엔진에서는 사용할 수 없습니다. `engine`을 `QUARTZ`로 바꾸거나 다른 타입(CRON 등)으로 변경하세요.
+
+### `FIXED_DELAY requires disallowConcurrent=true for safety`
+
+Quartz 엔진의 FIXED_DELAY는 이전 실행이 끝난 시점에 다음 실행을 등록하는 방식이라, 동시 실행이 허용되면 잡이 무한히 누적될 수 있습니다. 이를 방지하기 위해 `disallowConcurrent`를 강제로 true로 두도록 검증합니다. 의도적으로 동시 실행이 필요하다면 `FIXED_RATE`를 사용하세요.
+
+### Spring AOP(트랜잭션, 캐시 등)가 적용되지 않습니다
+
+본 라이브러리는 빈을 `ApplicationContext.getBean(beanName)`으로 가져오므로 Spring이 만들어둔 프록시(있다면 그 프록시)를 그대로 받습니다. 그럼에도 어드바이스가 타지 않는다면 다음을 확인하시기 바랍니다.
+
+- 잡 메서드가 `public`인지
+- 같은 빈의 다른 public 메서드를 잡 안에서 직접 호출하는 자기 호출(self-invocation)이 아닌지 — 이것은 Spring AOP의 일반 제약입니다.
+
+### Maven Central에서 의존성을 못 찾습니다
+
+발행 직후 약 15~30분간은 `repo1.maven.org` 동기화 대기 시간이 있습니다. 그동안은 다음 URL이 비어 있을 수 있습니다.
+
+```
+https://repo1.maven.org/maven2/io/github/black-astro/easy-quartz-spring-boot-starter/0.0.2/
+```
+
+해당 페이지에 jar/pom 파일이 보이는 시점부터 일반 빌드에서 정상적으로 받을 수 있습니다.
 
 ---
 

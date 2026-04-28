@@ -79,6 +79,7 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
     }
 
     private void registerScheduled(String beanName, Method m, EasyQuartzScheduled a) {
+        validate(beanName, m, a);
         try {
             if (a.engine() == SchedulerEngine.SPRING) {
                 springRegistrar.register(beanName, m, a);
@@ -91,8 +92,34 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
                 case CALENDAR -> registerScheduledCalendar(beanName, m, a);
                 case DAILY_TIME -> registerScheduledDailyTime(beanName, m, a);
             }
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to register scheduled method: " + beanName + "." + m.getName(), e);
+            throw new IllegalStateException(
+                    "Failed to register @EasyQuartzScheduled on " + beanName + "." + m.getName(), e);
+        }
+    }
+
+    /**
+     * 어노테이션 입력값을 사전 검증합니다. 실행 단계에서 발생할 수 있는
+     * 이해하기 힘든 예외(IAE)를 등록 시점에 잡아 명확한 메시지로 던집니다.
+     */
+    private void validate(String beanName, Method m, EasyQuartzScheduled a) {
+        String where = beanName + "." + m.getName();
+        if (a.jitterSeconds() < 0) {
+            throw new IllegalArgumentException("jitterSeconds must be >= 0 on " + where);
+        }
+        if (a.startDelaySeconds() < 0) {
+            throw new IllegalArgumentException("startDelaySeconds must be >= 0 on " + where);
+        }
+        if (a.engine() == SchedulerEngine.SPRING) {
+            switch (a.type()) {
+                case CALENDAR, DAILY_TIME -> throw new IllegalArgumentException(
+                        "ScheduleType " + a.type() + " is supported only on the QUARTZ engine. "
+                                + "Either change the engine to QUARTZ or pick CRON/FIXED_RATE/FIXED_DELAY. ("
+                                + where + ")");
+                default -> {}
+            }
         }
     }
 
@@ -329,9 +356,10 @@ public class EasyQuartzRegistrar implements SmartInitializingSingleton {
             applyJobData(map, a.jobData());
         }
 
+        String desc = a.description() == null ? "" : a.description();
         return JobBuilder.newJob(backward.jobClass(a.disallowConcurrent()))
                 .withIdentity(jk)
-                .withDescription(a.description())
+                .withDescription(desc)
                 .usingJobData(map)
                 .storeDurably(true)
                 .requestRecovery(a.requestRecovery())

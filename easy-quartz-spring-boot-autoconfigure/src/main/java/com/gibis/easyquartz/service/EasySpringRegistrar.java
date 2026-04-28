@@ -34,6 +34,7 @@ public class EasySpringRegistrar implements DisposableBean {
     private final EasyQuartzProperties props;
     private final TaskScheduler taskScheduler;
     private final ConcurrentHashMap<String, ScheduledFuture<?>> scheduled = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Method> methodCache = new ConcurrentHashMap<>();
 
     public EasySpringRegistrar(ApplicationContext appCtx, EasyQuartzProperties props, TaskScheduler taskScheduler) {
         this.appCtx = appCtx;
@@ -41,35 +42,38 @@ public class EasySpringRegistrar implements DisposableBean {
         this.taskScheduler = taskScheduler;
     }
 
-    public void register(String beanName, Method method, EasyQuartzScheduled a) {
-        Runnable task = () -> invoke(beanName, method);
+    public void register(String beanName, Method targetMethod, EasyQuartzScheduled a) {
+        String key = beanName + "." + targetMethod.getName();
+        Runnable task = () -> invoke(beanName, targetMethod.getName());
 
         long initialDelayMs = a.startDelaySeconds() * 1000L
                 + (a.jitterSeconds() > 0 ? ThreadLocalRandom.current().nextLong(a.jitterSeconds() * 1000L + 1) : 0L);
         Instant startAt = Instant.now().plusMillis(initialDelayMs);
 
-        String key = beanName + "." + method.getName();
         ScheduledFuture<?> future = switch (a.type()) {
             case CRON -> {
                 if (a.cron().isBlank()) {
-                    throw new IllegalArgumentException("cron expression is required for CRON type");
+                    throw new IllegalArgumentException("cron expression is required for CRON type on " + key);
                 }
                 String tzId = a.timeZone().isBlank() ? props.getDefaultTimeZone() : a.timeZone();
                 yield taskScheduler.schedule(task, new CronTrigger(a.cron(), TimeZone.getTimeZone(tzId).toZoneId()));
             }
             case FIXED_RATE -> {
                 long intervalMs = totalMs(a.fixedRateHours(), a.fixedRateMinutes(), a.fixedRateSeconds());
-                if (intervalMs <= 0) throw new IllegalArgumentException("FIXED_RATE requires positive interval");
+                if (intervalMs <= 0) {
+                    throw new IllegalArgumentException("FIXED_RATE requires positive interval on " + key);
+                }
                 yield taskScheduler.scheduleAtFixedRate(task, startAt, Duration.ofMillis(intervalMs));
             }
             case FIXED_DELAY -> {
                 long intervalMs = totalMs(a.fixedDelayHours(), a.fixedDelayMinutes(), a.fixedDelaySeconds());
-                if (intervalMs <= 0) throw new IllegalArgumentException("FIXED_DELAY requires positive interval");
+                if (intervalMs <= 0) {
+                    throw new IllegalArgumentException("FIXED_DELAY requires positive interval on " + key);
+                }
                 yield taskScheduler.scheduleWithFixedDelay(task, startAt, Duration.ofMillis(intervalMs));
             }
             case CALENDAR, DAILY_TIME -> throw new IllegalStateException(
-                    "ScheduleType " + a.type() + " is supported only on the QUARTZ engine. "
-                            + "Method: " + key);
+                    "ScheduleType " + a.type() + " is supported only on the QUARTZ engine: " + key);
         };
 
         ScheduledFuture<?> previous = scheduled.put(key, future);
@@ -85,14 +89,27 @@ public class EasySpringRegistrar implements DisposableBean {
         }
     }
 
-    private void invoke(String beanName, Method method) {
+    /**
+     * Spring AOP 프록시(트랜잭션, 캐시 등)가 적용되도록 빈의 실제 클래스에서 메서드를 lookup하여 호출합니다.
+     * 결과는 ConcurrentHashMap에 캐시되어 매 실행마다 reflection lookup을 반복하지 않습니다.
+     */
+    private void invoke(String beanName, String methodName) {
+        Object bean = appCtx.getBean(beanName);
+        Class<?> beanClass = bean.getClass();
+        Method method = methodCache.computeIfAbsent(beanClass.getName() + "#" + methodName, k -> {
+            try {
+                return beanClass.getMethod(methodName);
+            } catch (NoSuchMethodException e) {
+                throw new IllegalStateException(
+                        "Method not found on bean: " + beanClass.getName() + "." + methodName, e);
+            }
+        });
         try {
-            Object bean = appCtx.getBean(beanName);
             method.invoke(bean);
         } catch (InvocationTargetException e) {
-            log.error("Spring-engine scheduled task failed: {}.{}", beanName, method.getName(), e.getTargetException());
+            log.error("Spring-engine scheduled task failed: {}.{}", beanName, methodName, e.getTargetException());
         } catch (Exception e) {
-            log.error("Spring-engine scheduled task invocation error: {}.{}", beanName, method.getName(), e);
+            log.error("Spring-engine scheduled task invocation error: {}.{}", beanName, methodName, e);
         }
     }
 
@@ -104,5 +121,6 @@ public class EasySpringRegistrar implements DisposableBean {
     public void destroy() {
         scheduled.values().forEach(f -> f.cancel(false));
         scheduled.clear();
+        methodCache.clear();
     }
 }
