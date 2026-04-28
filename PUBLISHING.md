@@ -90,13 +90,13 @@ CI 환경 등에서 `gradle.properties` 대신 환경변수를 쓸 수 있도록
 
 ```properties
 githubUser=black-astro
-githubRepo=smart-msg
+githubRepo=easy-quartz
 ```
 
 이 값들로부터 다음이 자동 결정됩니다.
 
 - `group = io.github.${githubUser}` → `io.github.black-astro`
-- POM `url`, `scm.connection`, `scm.developerConnection` → `https://github.com/black-astro/smart-msg`
+- POM `url`, `scm.connection`, `scm.developerConnection` → `https://github.com/black-astro/easy-quartz`
 - POM `developer.id` → `${githubUser}`
 
 > `group`은 GitHub 아이디만으로 결정되며 repo 이름과 무관합니다. 따라서 다른 repo로 옮기더라도 동일 좌표 `io.github.black-astro:easy-quartz-spring-boot-starter:...`로 발행할 수 있습니다.
@@ -166,7 +166,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.black-astro.smart-msg:easy-quartz-spring-boot-starter:0.0.1'
+    implementation 'com.github.black-astro.easy-quartz:easy-quartz-spring-boot-starter:0.0.1'
 }
 ```
 
