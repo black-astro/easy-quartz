@@ -1,0 +1,7 @@
+easy:
+  quartz:
+    enabled: true
+    scan-packages:
+      - com.gibis.sample
+    update-existing: true
+    store-type: MEMORY

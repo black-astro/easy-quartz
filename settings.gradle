@@ -1,0 +1,10 @@
+rootProject.name = 'easy-quartz'
+
+include 'easy-quartz-spring-boot-autoconfigure'
+include 'easy-quartz-spring-boot-starter'
+
+// 샘플 앱은 -PwithSample=true 일 때만 멀티모듈에 포함 (publish 대상 아님)
+if (file('easy-quartz-sample-app').exists()
+        && gradle.startParameter.projectProperties.get('withSample') == 'true') {
+    include 'easy-quartz-sample-app'
+}

@@ -1,0 +1,20 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:3.4.5')
+
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-quartz'
+
+    // 본 라이브러리(starter) — 사용자가 실제 import 하는 좌표와 동일한 형태
+    implementation project(':easy-quartz-spring-boot-starter')
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+application {
+    mainClass = 'com.gibis.sample.SampleApp'
+}

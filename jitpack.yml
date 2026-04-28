@@ -1,0 +1,6 @@
+jdk:
+  - openjdk21
+
+# JitPack용: Maven Central 서명/배포 task는 건드리지 않고 로컬 publish만 수행
+install:
+  - ./gradlew :easy-quartz-spring-boot-autoconfigure:publishToMavenLocal :easy-quartz-spring-boot-starter:publishToMavenLocal -x test -x sign

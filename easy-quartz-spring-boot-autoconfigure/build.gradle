@@ -1,0 +1,22 @@
+description = 'Auto-configuration for easy-quartz: declarative Quartz scheduling for Spring Boot'
+
+dependencies {
+    // 라이브러리 사용자에게도 필요한 API → api로 노출
+    api 'org.quartz-scheduler:quartz'
+
+    // autoconfigure 내부에서만 사용 (사용자는 starter가 잡아줌)
+    compileOnly 'org.springframework.boot:spring-boot-starter-quartz'
+
+    implementation 'org.springframework.boot:spring-boot-autoconfigure'
+    implementation 'org.springframework:spring-context'
+    implementation 'org.springframework:spring-aop'
+
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+    annotationProcessor 'org.springframework.boot:spring-boot-autoconfigure-processor'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+tasks.test {
+    useJUnitPlatform()
+}

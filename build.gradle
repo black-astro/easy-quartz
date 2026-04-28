@@ -1,0 +1,117 @@
+plugins {
+    // Maven Central 자동 publish (Sonatype Central Portal)
+    id 'io.github.gradle-nexus.publish-plugin' version '2.0.0'
+}
+
+allprojects {
+    // TODO: gradle.properties의 githubUser 값을 본인 GitHub 아이디로 바꾸세요.
+    //       (Maven Central 발행 시 io.github.<id> 네임스페이스는 GitHub 계정만으로 자동 검증됨)
+    def ghUser = (findProperty('githubUser') ?: 'TODO_GITHUB_ID').toString()
+
+    group = "io.github.${ghUser}"
+    version = '0.0.1'
+
+    repositories { mavenCentral() }
+
+    ext.githubUser = ghUser
+    ext.libUrl = "https://github.com/${ghUser}/easy-quartz"
+    ext.scmConnection = "scm:git:git://github.com/${ghUser}/easy-quartz.git"
+    ext.scmDeveloperConnection = "scm:git:ssh://github.com/${ghUser}/easy-quartz.git"
+}
+
+ext {
+    libDeveloperName = 'gibis'
+    libDeveloperEmail = 'gntj3200@gmail.com'
+    libLicenseName = 'The Apache License, Version 2.0'
+    libLicenseUrl = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+}
+
+subprojects {
+    if (name == 'easy-quartz-sample-app') return
+
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'signing'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+        withSourcesJar()
+        withJavadocJar()
+    }
+
+    dependencies {
+        // 공개되는 API에는 일반 platform (사용자 빌드에 강제하지 않음)
+        api platform('org.springframework.boot:spring-boot-dependencies:3.4.5')
+        // annotationProcessor는 자기 컴파일 시점에만 강제로 버전 고정
+        annotationProcessor enforcedPlatform('org.springframework.boot:spring-boot-dependencies:3.4.5')
+        testImplementation enforcedPlatform('org.springframework.boot:spring-boot-dependencies:3.4.5')
+    }
+
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        // 라이브러리 javadoc 빌드 실패 방지 (필수 태그 누락 등)
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                from components.java
+
+                pom {
+                    name = project.name
+                    description = project.description ?: project.name
+                    url = project.ext.libUrl
+
+                    licenses {
+                        license {
+                            name = rootProject.ext.libLicenseName
+                            url = rootProject.ext.libLicenseUrl
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = project.ext.githubUser
+                            name = rootProject.ext.libDeveloperName
+                            email = rootProject.ext.libDeveloperEmail
+                        }
+                    }
+                    scm {
+                        connection = project.ext.scmConnection
+                        developerConnection = project.ext.scmDeveloperConnection
+                        url = project.ext.libUrl
+                    }
+                }
+            }
+        }
+    }
+
+    // Maven Central은 서명 필수. JitPack/로컬 빌드에서는 키 없이 통과시킴.
+    signing {
+        def signingKey = findProperty('signingKey') ?: System.getenv('SIGNING_KEY')
+        def signingPassword = findProperty('signingPassword') ?: System.getenv('SIGNING_PASSWORD')
+        required = { gradle.taskGraph.hasTask('publishToSonatype') && signingKey }
+        if (signingKey) {
+            useInMemoryPgpKeys(signingKey, signingPassword)
+            sign publishing.publications.mavenJava
+        }
+    }
+}
+
+// 루트에서 한 방에 Maven Central(Sonatype Central Portal)에 올림
+nexusPublishing {
+    repositories {
+        sonatype {
+            // Sonatype Central Portal (2024년부터 신규 가입자는 이쪽)
+            nexusUrl.set(uri('https://ossrh-staging-api.central.sonatype.com/service/local/'))
+            snapshotRepositoryUrl.set(uri('https://central.sonatype.com/repository/maven-snapshots/'))
+            // Central Portal에서 발급받은 user token 사용
+            username.set(findProperty('ossrhUsername') ?: System.getenv('OSSRH_USERNAME') ?: '')
+            password.set(findProperty('ossrhPassword') ?: System.getenv('OSSRH_PASSWORD') ?: '')
+        }
+    }
+}
